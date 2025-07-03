@@ -502,7 +502,7 @@ class TUIRenderer:
         return f"{bytes_val:.1f}TB"
     def draw_header(self):
         """Draw the header section."""
-        title = "=== Bitaxe Firmware Updater TUI ==="
+        title = "=== The Bitaxe Firmware Updtrrrrrr ==="
         title_x = max(0, (self.width - len(title)) // 2)
         
         self.safe_addstr(0, title_x, title, curses.color_pair(6) | curses.A_BOLD)
