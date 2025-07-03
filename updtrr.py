@@ -23,6 +23,7 @@ import time
 from pathlib import Path
 from typing import List, Tuple
 import logging
+from tqdm import tqdm
 
 # Configure logging
 logging.basicConfig(
@@ -123,6 +124,53 @@ class BitaxeUpdater:
         except Exception as e:
             raise ValueError(f"Cannot read binary file {bin_file}: {e}")
     
+    def upload_with_progress(self, url: str, file_path: Path, description: str) -> requests.Response:
+        """
+        Upload a file with progress bar.
+        
+        Args:
+            url: Upload URL
+            file_path: Path to file to upload
+            description: Description for progress bar
+            
+        Returns:
+            requests.Response object
+        """
+        file_size = file_path.stat().st_size
+        
+        with open(file_path, 'rb') as f:
+            # Create progress bar
+            with tqdm(total=file_size, unit='B', unit_scale=True, 
+                     desc=description, ascii=True, leave=False) as pbar:
+                
+                # Create a custom file-like object that updates progress
+                class ProgressFileReader:
+                    def __init__(self, file_obj, progress_bar):
+                        self.file_obj = file_obj
+                        self.progress_bar = progress_bar
+                        self._total_read = 0
+                    
+                    def read(self, size=-1):
+                        chunk = self.file_obj.read(size)
+                        if chunk:
+                            self.progress_bar.update(len(chunk))
+                            self._total_read += len(chunk)
+                        return chunk
+                    
+                    def __len__(self):
+                        return file_size
+                
+                progress_reader = ProgressFileReader(f, pbar)
+                
+                # Upload with progress tracking
+                response = self.session.post(
+                    url,
+                    data=progress_reader,
+                    timeout=self.timeout
+                )
+                
+                return response
+    
     def upload_firmware(self, ip: str, firmware_file: Path) -> bool:
         """
         Upload ESP-Miner firmware to a device.
@@ -137,15 +185,13 @@ class BitaxeUpdater:
         url = f"http://{ip}/api/system/OTA"
         
         try:
-            with open(firmware_file, 'rb') as f:
-                firmware_data = f.read()
+            file_size = firmware_file.stat().st_size
+            logger.info(f"Uploading firmware to {ip} ({file_size} bytes)")
             
-            logger.info(f"Uploading firmware to {ip} ({len(firmware_data)} bytes)")
-            
-            response = self.session.post(
-                url,
-                data=firmware_data,
-                timeout=self.timeout
+            response = self.upload_with_progress(
+                url, 
+                firmware_file, 
+                f"FW {ip}"
             )
             
             if response.status_code == 200:
@@ -182,15 +228,13 @@ class BitaxeUpdater:
         url = f"http://{ip}/api/system/OTAWWW"
         
         try:
-            with open(www_file, 'rb') as f:
-                www_data = f.read()
+            file_size = www_file.stat().st_size
+            logger.info(f"Uploading web interface to {ip} ({file_size} bytes)")
             
-            logger.info(f"Uploading web interface to {ip} ({len(www_data)} bytes)")
-            
-            response = self.session.post(
-                url,
-                data=www_data,
-                timeout=self.timeout
+            response = self.upload_with_progress(
+                url, 
+                www_file, 
+                f"WWW {ip}"
             )
             
             if response.status_code == 200:

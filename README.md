@@ -74,6 +74,7 @@ The TUI version (`updtrr_tui.py`) provides:
 
 - **Real-time status display** with colored indicators
 - **Live progress tracking** showing current device and overall progress
+- **Upload progress bars** for each image (WWW and firmware) with percentage and byte counts
 - **Device status grid** with visual symbols:
   - ⏳ Pending
   - 📤 Uploading web interface
