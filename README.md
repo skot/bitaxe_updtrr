@@ -5,6 +5,7 @@ A Python script to update ESP-Miner firmware and web interface files on multiple
 ## Features
 
 - Updates multiple Bitaxe devices from a CSV file of IP addresses
+- **Version checking** - Automatically detects if devices are already up to date
 - Uploads ESP-Miner firmware via `/api/system/OTA` endpoint
 - Uploads web interface files via `/api/system/OTAWWW` endpoint
 - **Beautiful TUI (Text User Interface)** with real-time status updates
@@ -12,6 +13,7 @@ A Python script to update ESP-Miner firmware and web interface files on multiple
 - Configurable timeouts and delays
 - Progress tracking and detailed error reporting
 - Supports both simple IP list and CSV formats
+- **Force update** option to update even if versions match
 
 ## Requirements
 
@@ -67,6 +69,28 @@ python updtrr_tui.py --timeout 120 --device-delay 15 --upload-delay 10 devices.c
 - `--timeout`: HTTP request timeout in seconds (default: 60)
 - `--device-delay`: Delay between device updates in seconds (default: 10)
 - `--upload-delay`: Delay between web interface and firmware uploads in seconds (default: 5)
+- `--force`: Force update even if device firmware is already up to date
+- `--check-versions`: Only check versions without updating devices (CLI only)
+- `--debug`: Run in debug mode (TUI only)
+
+### Version Checking
+
+The updater automatically checks if devices need updates by:
+
+1. **Extracting version** from the firmware binary file
+2. **Querying device** version via `/api/system/info` endpoint
+3. **Comparing versions** using semantic versioning
+4. **Skipping updates** if device is already up to date
+
+Examples:
+```bash
+# Check versions without updating
+python updtrr.py --check-versions devices.csv esp-miner.bin www.bin
+
+# Force update even if versions match
+python updtrr.py --force devices.csv esp-miner.bin www.bin
+python updtrr_tui.py --force devices.csv esp-miner.bin www.bin
+```
 
 ## TUI Features
 
@@ -77,7 +101,9 @@ The TUI version (`updtrr_tui.py`) provides:
 - **Upload progress bars** for each image (WWW and firmware) with percentage and byte counts
 - **Device status grid** with visual symbols:
   - ⏳ Pending
-  - 📤 Uploading web interface
+  - � Checking version
+  - ✅ Up to date
+  - �📤 Uploading web interface
   - ⚡ Uploading firmware
   - ✓ Success
   - ✗ Failed

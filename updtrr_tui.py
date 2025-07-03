@@ -16,6 +16,7 @@ import argparse
 import time
 import curses
 import threading
+import re
 from pathlib import Path
 from typing import List, Tuple, Dict, Optional
 from queue import Queue, Empty
@@ -26,6 +27,8 @@ import json
 class DeviceStatus:
     """Represents the status of a device update."""
     PENDING = "PENDING"
+    CHECKING_VERSION = "CHECKING_VERSION"
+    UP_TO_DATE = "UP_TO_DATE"
     WWW_UPLOADING = "WWW_UPLOADING"
     WWW_SUCCESS = "WWW_SUCCESS"
     WWW_FAILED = "WWW_FAILED"
@@ -125,6 +128,108 @@ class BitaxeUpdaterTUI:
         
         if bin_file.stat().st_size == 0:
             raise ValueError(f"Binary file is empty: {bin_file}")
+    
+    def get_device_version(self, ip: str) -> Optional[Dict[str, str]]:
+        """Get version information from a device via API."""
+        try:
+            response = self.session.get(
+                f"http://{ip}/api/system/info",
+                timeout=self.timeout
+            )
+            
+            if response.status_code == 200:
+                info = response.json()
+                return {
+                    'version': info.get('version', 'unknown'),
+                    'axeOSVersion': info.get('axeOSVersion', 'unknown')
+                }
+            else:
+                self.add_event("ERROR", ip, f"Failed to get version info: HTTP {response.status_code}")
+                return None
+                
+        except requests.exceptions.RequestException as e:
+            self.add_event("ERROR", ip, f"Failed to get version info: {e}")
+            return None
+    
+    def extract_version_from_binary(self, binary_file: Path) -> Optional[str]:
+        """Extract version information from ESP-Miner firmware binary."""
+        try:
+            with open(binary_file, 'rb') as f:
+                data = f.read()
+            
+            # Look for version patterns in the binary
+            version_patterns = [
+                rb'v(\d+\.\d+\.\d+)',  # Standard version format
+                rb'version[:\s]*(\d+\.\d+\.\d+)',  # Version with label
+                rb'ESP-Miner[:\s]*v?(\d+\.\d+\.\d+)',  # ESP-Miner specific
+                rb'FW[:\s]*v?(\d+\.\d+\.\d+)',  # Firmware version
+                rb'(\d+\.\d+\.\d+)',  # Generic version pattern
+            ]
+            
+            for pattern in version_patterns:
+                matches = re.findall(pattern, data, re.IGNORECASE)
+                if matches:
+                    # Return the first match, decoded
+                    version = matches[0].decode('utf-8', errors='ignore')
+                    return version
+            
+            return None
+            
+        except Exception as e:
+            self.add_event("ERROR", "", f"Error extracting version from {binary_file}: {e}")
+            return None
+    
+    def compare_versions(self, current_version: str, binary_version: str) -> bool:
+        """Compare version strings to determine if update is needed."""
+        def parse_version(version_str: str) -> Tuple[int, int, int]:
+            """Parse version string into tuple of integers."""
+            # Remove 'v' prefix if present and extract numbers
+            clean_version = re.sub(r'^v', '', version_str.strip())
+            parts = re.findall(r'\d+', clean_version)
+            
+            if len(parts) >= 3:
+                return (int(parts[0]), int(parts[1]), int(parts[2]))
+            elif len(parts) == 2:
+                return (int(parts[0]), int(parts[1]), 0)
+            elif len(parts) == 1:
+                return (int(parts[0]), 0, 0)
+            else:
+                return (0, 0, 0)
+        
+        try:
+            current_tuple = parse_version(current_version)
+            binary_tuple = parse_version(binary_version)
+            
+            # Return True if binary version is newer
+            return binary_tuple > current_tuple
+            
+        except Exception:
+            # If we can't compare versions, assume update is needed
+            return True
+    
+    def check_if_update_needed(self, ip: str, firmware_file: Path) -> Tuple[bool, str]:
+        """Check if a device needs a firmware update."""
+        # Get device version
+        device_info = self.get_device_version(ip)
+        if not device_info:
+            return True, "Unable to get device version - proceeding with update"
+        
+        current_version = device_info.get('version', 'unknown')
+        
+        # Extract version from binary
+        binary_version = self.extract_version_from_binary(firmware_file)
+        if not binary_version:
+            return True, f"Unable to extract binary version - proceeding with update (current: {current_version})"
+        
+        # Compare versions
+        update_needed = self.compare_versions(current_version, binary_version)
+        
+        if update_needed:
+            status_msg = f"Update needed: {current_version} -> {binary_version}"
+        else:
+            status_msg = f"Already up to date: {current_version} (binary: {binary_version})"
+        
+        return update_needed, status_msg
     
     def add_event(self, event_type: str, device_ip: str, message: str, status: str = None):
         """Add an event to the queue for TUI display."""
@@ -243,9 +348,23 @@ class BitaxeUpdaterTUI:
             
         return success
     
-    def update_device(self, ip: str, firmware_file: Path, www_file: Path, delay: int = 5) -> Tuple[bool, bool]:
+    def update_device(self, ip: str, firmware_file: Path, www_file: Path, delay: int = 5, force: bool = False) -> Tuple[bool, bool]:
         """Update both web interface and firmware on a device."""
         self.add_event("DEVICE_START", ip, "Starting device update...")
+        
+        # Check if firmware update is needed (unless forced)
+        if not force:
+            self.devices[ip] = DeviceStatus.CHECKING_VERSION
+            self.add_event("VERSION_CHECK", ip, "Checking device version...")
+            
+            update_needed, status_msg = self.check_if_update_needed(ip, firmware_file)
+            self.add_event("VERSION_CHECK", ip, status_msg)
+            
+            if not update_needed:
+                self.devices[ip] = DeviceStatus.UP_TO_DATE
+                self.add_event("UP_TO_DATE", ip, "Device already up to date - skipping")
+                self.stats['completed'] += 1
+                return True, True  # Consider as success since no update needed
         
         # Upload web interface first
         www_success = self.upload_www(ip, www_file)
@@ -274,7 +393,7 @@ class BitaxeUpdaterTUI:
         return www_success, firmware_success
     
     def update_worker(self, ip_addresses: List[str], firmware_file: Path, www_file: Path, 
-                     device_delay: int = 10, upload_delay: int = 5):
+                     device_delay: int = 10, upload_delay: int = 5, force: bool = False):
         """Worker thread that performs the actual updates."""
         self.is_running = True
         self.start_time = datetime.now()
@@ -288,7 +407,7 @@ class BitaxeUpdaterTUI:
             
             self.add_event("PROGRESS", ip, f"Starting device {i}/{len(ip_addresses)}")
             
-            www_success, firmware_success = self.update_device(ip, firmware_file, www_file, upload_delay)
+            www_success, firmware_success = self.update_device(ip, firmware_file, www_file, upload_delay, force)
             
             # Delay between devices (except for the last one)
             if i < len(ip_addresses) and device_delay > 0 and self.is_running:
@@ -325,6 +444,8 @@ class TUIRenderer:
         """Get color pair for status."""
         color_map = {
             DeviceStatus.PENDING: 3,           # Yellow
+            DeviceStatus.CHECKING_VERSION: 4,   # Blue
+            DeviceStatus.UP_TO_DATE: 1,        # Green
             DeviceStatus.WWW_UPLOADING: 5,     # Cyan
             DeviceStatus.WWW_SUCCESS: 1,       # Green
             DeviceStatus.WWW_FAILED: 2,        # Red
@@ -340,6 +461,8 @@ class TUIRenderer:
         """Get symbol for status."""
         symbol_map = {
             DeviceStatus.PENDING: "...",
+            DeviceStatus.CHECKING_VERSION: "CHK",
+            DeviceStatus.UP_TO_DATE: "✓✓",
             DeviceStatus.WWW_UPLOADING: "WWW",
             DeviceStatus.WWW_SUCCESS: " + ",
             DeviceStatus.WWW_FAILED: " X ",
@@ -579,7 +702,7 @@ class TUIRenderer:
             pass
     
     def run(self, ip_addresses: List[str], firmware_file: Path, www_file: Path, 
-            device_delay: int = 10, upload_delay: int = 5):
+            device_delay: int = 10, upload_delay: int = 5, force: bool = False):
         """Main TUI loop."""
         # Initialize device list
         for ip in ip_addresses:
@@ -590,7 +713,7 @@ class TUIRenderer:
         # Start update worker thread
         update_thread = threading.Thread(
             target=self.updater.update_worker,
-            args=(ip_addresses, firmware_file, www_file, device_delay, upload_delay)
+            args=(ip_addresses, firmware_file, www_file, device_delay, upload_delay, force)
         )
         update_thread.daemon = True
         update_thread.start()
@@ -660,7 +783,7 @@ def main_tui(stdscr, args):
         
         # Run TUI
         tui.run(ip_addresses, args.esp_miner_bin, args.www_bin, 
-               device_delay=args.device_delay, upload_delay=args.upload_delay)
+               device_delay=args.device_delay, upload_delay=args.upload_delay, force=args.force)
         
         # Show final results
         stdscr.clear()
@@ -709,6 +832,8 @@ def main():
                        help='Delay between device updates in seconds (default: 10)')
     parser.add_argument('--upload-delay', type=int, default=5,
                        help='Delay between web interface and firmware uploads in seconds (default: 5)')
+    parser.add_argument('--force', action='store_true',
+                       help='Force update even if device firmware is already up to date')
     parser.add_argument('--debug', action='store_true',
                        help='Run in debug mode (show errors instead of TUI)')
     
