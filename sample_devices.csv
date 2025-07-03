@@ -1,0 +1,11 @@
+# Sample CSV file for Bitaxe device IP addresses
+# You can use either a simple list format (one IP per line) or CSV format
+# Lines starting with # are ignored
+
+# Simple list format:
+192.168.1.52
+
+# Or CSV format (first column will be used):
+# IP,Device Name,Notes
+# 192.168.1.100,Bitaxe-001,Main device
+# 192.168.1.101,Bitaxe-002,Test device
