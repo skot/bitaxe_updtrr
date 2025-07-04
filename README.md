@@ -1,6 +1,16 @@
 # updtrr - Bitaxe Firmware and Web Interface Updater
 
-A Python script to update ESP-Miner firmware and web interface files on multiple Bitaxe devices simultaneously. Includes both command-line and beautiful TUI (Text User Interface) versions.
+A Python script to update ESP-Miner firmware and web interface files on multip- **Device status grid** with visual symbols:
+  - ⏳ Pending
+  - 📡 Discovering devices
+  - 🎯 Device discovered
+  - 🔍 Checking version
+  - ✅ Up to date
+  - 📤 Uploading web interface
+  - ⚡ Uploading firmware
+  - ✓ Success
+  - ✗ Failed
+  - 🎉 Completed devices simultaneously. Includes both command-line and beautiful TUI (Text User Interface) versions.
 
 ## Features
 
@@ -71,6 +81,9 @@ python updtrr_tui.py --timeout 120 --device-delay 15 --upload-delay 10 devices.c
 - `--upload-delay`: Delay between web interface and firmware uploads in seconds (default: 5)
 - `--force`: Force update even if device firmware is already up to date
 - `--check-versions`: Only check versions without updating devices (CLI only)
+- `--discover`: Automatically discover Bitaxe devices on the network
+- `--network`: Network CIDR to scan for discovery (e.g., 192.168.1.0/24)
+- `--save-discovered`: Save discovered devices to CSV file (CLI only)
 - `--debug`: Run in debug mode (TUI only)
 
 ### Version Checking
@@ -91,6 +104,34 @@ python updtrr.py --check-versions devices.csv esp-miner.bin www.bin
 python updtrr.py --force devices.csv esp-miner.bin www.bin
 python updtrr_tui.py --force devices.csv esp-miner.bin www.bin
 ```
+
+### Automatic Discovery
+
+The updater can automatically discover Bitaxe devices on your network:
+
+1. **Network scanning** using nmap to find devices with HTTP service
+2. **Device verification** via API calls to confirm they are Bitaxe miners
+3. **Automatic detection** of local network CIDR (usually /24)
+
+Examples:
+```bash
+# Discover devices automatically
+python updtrr.py --discover esp-miner.bin www.bin
+
+# Discover on specific network
+python updtrr.py --discover --network 192.168.1.0/24 esp-miner.bin www.bin
+
+# Discover and save to CSV file
+python updtrr.py --discover --save-discovered discovered_devices.csv esp-miner.bin www.bin
+
+# TUI with discovery
+python updtrr_tui.py --discover esp-miner.bin www.bin
+```
+
+**Requirements for Discovery:**
+- `nmap` must be installed on your system
+- Python package `python-nmap` (installed via requirements.txt)
+- Network access to scan local subnet
 
 ## TUI Features
 

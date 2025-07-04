@@ -22,6 +22,9 @@ import argparse
 import time
 import re
 import struct
+import subprocess
+import socket
+import nmap
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict
 import logging
@@ -488,8 +491,189 @@ class BitaxeUpdater:
         
         return update_needed, status_msg
     
+    def get_local_network_cidr(self) -> Optional[str]:
+        """Get the local network CIDR for scanning."""
+        try:
+            # Get the default gateway
+            if sys.platform == "darwin":  # macOS
+                result = subprocess.run(['route', '-n', 'get', 'default'], 
+                                      capture_output=True, text=True)
+                gateway = None
+                for line in result.stdout.split('\n'):
+                    if 'gateway:' in line:
+                        gateway = line.split(':')[1].strip()
+                        break
+            else:  # Linux
+                result = subprocess.run(['ip', 'route', 'show', 'default'], 
+                                      capture_output=True, text=True)
+                gateway = None
+                for line in result.stdout.split('\n'):
+                    if 'default via' in line:
+                        gateway = line.split()[2]
+                        break
+            
+            if not gateway:
+                logger.warning("Could not determine default gateway")
+                return None
+                
+            # Convert gateway to network CIDR (assume /24)
+            network_parts = gateway.split('.')
+            if len(network_parts) == 4:
+                network_cidr = f"{network_parts[0]}.{network_parts[1]}.{network_parts[2]}.0/24"
+                logger.info(f"Detected local network: {network_cidr}")
+                return network_cidr
+            else:
+                logger.warning(f"Invalid gateway format: {gateway}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error detecting local network: {e}")
+            return None
+    
+    def scan_for_bitaxes(self, network_cidr: str = None, timeout: int = 10) -> List[str]:
+        """
+        Scan the local network for Bitaxe devices.
+        
+        Args:
+            network_cidr: Network CIDR to scan (e.g., "192.168.1.0/24")
+            timeout: Timeout for each host check
+            
+        Returns:
+            List of IP addresses of discovered Bitaxe devices
+        """
+        logger.info("🔍 Scanning local network for Bitaxe devices...")
+        
+        if not network_cidr:
+            network_cidr = self.get_local_network_cidr()
+            if not network_cidr:
+                logger.error("Could not determine network to scan")
+                return []
+        
+        logger.info(f"Scanning network: {network_cidr}")
+        
+        try:
+            # Initialize nmap scanner
+            nm = nmap.PortScanner()
+            
+            # Scan for devices with port 80 open (web interface)
+            logger.info("Scanning for devices with HTTP service on port 80...")
+            scan_result = nm.scan(network_cidr, '80', timeout=timeout)
+            
+            potential_bitaxes = []
+            
+            # Check each host with port 80 open
+            for host in nm.all_hosts():
+                if nm[host].state() == 'up':
+                    tcp_ports = nm[host]['tcp'] if 'tcp' in nm[host] else {}
+                    if 80 in tcp_ports and tcp_ports[80]['state'] == 'open':
+                        potential_bitaxes.append(host)
+            
+            logger.info(f"Found {len(potential_bitaxes)} devices with HTTP service")
+            
+            if not potential_bitaxes:
+                logger.info("No devices with HTTP service found")
+                return []
+            
+            # Verify each potential device is actually a Bitaxe
+            verified_bitaxes = []
+            
+            logger.info("Verifying devices are Bitaxe miners...")
+            for ip in potential_bitaxes:
+                if self.verify_bitaxe_device(ip):
+                    verified_bitaxes.append(ip)
+                    logger.info(f"✓ Verified Bitaxe at {ip}")
+                else:
+                    logger.debug(f"✗ Not a Bitaxe: {ip}")
+            
+            logger.info(f"🎯 Found {len(verified_bitaxes)} Bitaxe devices")
+            
+            return verified_bitaxes
+            
+        except Exception as e:
+            logger.error(f"Error scanning network: {e}")
+            return []
+    
+    def verify_bitaxe_device(self, ip: str) -> bool:
+        """
+        Verify that a device is actually a Bitaxe by checking its API.
+        
+        Args:
+            ip: IP address to check
+            
+        Returns:
+            True if device is a Bitaxe, False otherwise
+        """
+        try:
+            # Try to get system info from the device
+            response = self.session.get(
+                f"http://{ip}/api/system/info",
+                timeout=5  # Short timeout for discovery
+            )
+            
+            if response.status_code == 200:
+                info = response.json()
+                
+                # Check for Bitaxe-specific fields
+                bitaxe_indicators = [
+                    'version',        # ESP-Miner version
+                    'asicModel',      # ASIC model (BM1366, BM1368, etc.)
+                    'boardVersion',   # Board version
+                    'chipTemp',       # Chip temperature
+                    'hashRate',       # Hash rate
+                    'power',          # Power consumption
+                ]
+                
+                # Check if device has Bitaxe-specific fields
+                found_indicators = sum(1 for field in bitaxe_indicators if field in info)
+                
+                if found_indicators >= 3:  # Must have at least 3 indicators
+                    # Additional check: look for known ASIC models
+                    asic_model = info.get('asicModel', '').upper()
+                    known_asics = ['BM1366', 'BM1368', 'BM1370', 'BM1397']
+                    
+                    if asic_model in known_asics:
+                        logger.debug(f"Verified Bitaxe at {ip}: {asic_model}")
+                        return True
+                    elif found_indicators >= 4:  # High confidence even without ASIC model
+                        logger.debug(f"Likely Bitaxe at {ip}: {found_indicators} indicators")
+                        return True
+                
+                logger.debug(f"Device at {ip} has {found_indicators} indicators, not a Bitaxe")
+                return False
+            else:
+                logger.debug(f"Device at {ip} returned HTTP {response.status_code}")
+                return False
+                
+        except Exception as e:
+            logger.debug(f"Error verifying device at {ip}: {e}")
+            return False
+    
+    def auto_discover_bitaxes(self, network_cidr: str = None) -> List[str]:
+        """
+        Automatically discover Bitaxe devices on the local network.
+        
+        Args:
+            network_cidr: Network CIDR to scan (auto-detected if not provided)
+            
+        Returns:
+            List of discovered Bitaxe IP addresses
+        """
+        logger.info("🚀 Starting automatic Bitaxe discovery...")
+        
+        bitaxes = self.scan_for_bitaxes(network_cidr)
+        
+        if bitaxes:
+            logger.info(f"✅ Discovery complete! Found {len(bitaxes)} Bitaxe devices:")
+            for ip in bitaxes:
+                logger.info(f"  - {ip}")
+        else:
+            logger.warning("❌ No Bitaxe devices found on the network")
+            
+        return bitaxes
+
+
 def main():
-    """Main function to run the updater."""
+    """Main function."""
     parser = argparse.ArgumentParser(
         description="Update ESP-Miner firmware and web interface on multiple Bitaxe devices",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -497,10 +681,12 @@ def main():
 Examples:
   python updtrr.py devices.csv esp-miner.bin www.bin
   python updtrr.py --timeout 120 --device-delay 15 devices.csv firmware.bin web.bin
+  python updtrr.py --discover --network 192.168.1.0/24 esp-miner.bin www.bin
+  python updtrr.py --check-versions devices.csv esp-miner.bin www.bin
         """
     )
     
-    parser.add_argument('csv_file', type=Path, help='CSV file containing IP addresses')
+    parser.add_argument('csv_file', type=Path, nargs='?', help='CSV file containing IP addresses (optional with --discover)')
     parser.add_argument('esp_miner_bin', type=Path, help='ESP-Miner firmware binary file')
     parser.add_argument('www_bin', type=Path, help='Web interface binary file')
     parser.add_argument('--timeout', type=int, default=60, 
@@ -513,6 +699,12 @@ Examples:
                        help='Force update even if device firmware is already up to date')
     parser.add_argument('--check-versions', action='store_true',
                        help='Only check versions without updating devices')
+    parser.add_argument('--discover', action='store_true',
+                       help='Automatically discover Bitaxe devices on the network')
+    parser.add_argument('--network', type=str,
+                       help='Network CIDR to scan for discovery (e.g., 192.168.1.0/24)')
+    parser.add_argument('--save-discovered', type=Path,
+                       help='Save discovered devices to CSV file')
     
     args = parser.parse_args()
     
@@ -525,8 +717,30 @@ Examples:
         updater.validate_binary_file(args.esp_miner_bin)
         updater.validate_binary_file(args.www_bin)
         
-        # Load IP addresses
-        ip_addresses = updater.load_ip_addresses(args.csv_file)
+        # Handle discovery mode
+        if args.discover:
+            logger.info("🔍 Discovery mode enabled")
+            ip_addresses = updater.auto_discover_bitaxes(args.network)
+            
+            if not ip_addresses:
+                logger.error("No Bitaxe devices discovered")
+                sys.exit(1)
+            
+            # Save discovered devices if requested
+            if args.save_discovered:
+                logger.info(f"Saving discovered devices to {args.save_discovered}")
+                with open(args.save_discovered, 'w', newline='') as f:
+                    writer = csv.writer(f)
+                    writer.writerow(['# Discovered Bitaxe devices'])
+                    for ip in ip_addresses:
+                        writer.writerow([ip])
+                logger.info(f"✓ Saved {len(ip_addresses)} devices to {args.save_discovered}")
+        else:
+            # Load IP addresses from CSV file
+            if not args.csv_file:
+                logger.error("CSV file is required unless using --discover")
+                sys.exit(1)
+            ip_addresses = updater.load_ip_addresses(args.csv_file)
         
         # Check if we're only checking versions
         if args.check_versions:
@@ -562,18 +776,20 @@ Examples:
             return original_update_device(ip, fw_file, www_file, delay=args.upload_delay, force=args.force)
         updater.update_device = update_device_with_delay
         
+        # Update all devices
         results = updater.update_all_devices(ip_addresses, args.esp_miner_bin, args.www_bin, 
-                                           device_delay=args.device_delay)
+                                           device_delay=args.device_delay, force=args.force)
         
         # Print summary
-        logger.info("\n" + "="*60)
+        logger.info(f"\n{'='*50}")
         logger.info("UPDATE SUMMARY")
-        logger.info("="*60)
+        logger.info(f"{'='*50}")
         logger.info(f"Total devices: {results['total']}")
-        logger.info(f"Firmware successful: {results['firmware_success']}")
-        logger.info(f"Web interface successful: {results['www_success']}")
-        logger.info(f"Both successful: {results['both_success']}")
-        logger.info(f"Complete failures: {len(results['failed'])}")
+        logger.info(f"Firmware uploads successful: {results['firmware_success']}")
+        logger.info(f"Web interface uploads successful: {results['www_success']}")
+        logger.info(f"Both uploads successful: {results['both_success']}")
+        logger.info(f"Up to date (skipped): {results.get('up_to_date', 0)}")
+        logger.info(f"Failed: {len(results['failed'])}")
         
         if results['failed']:
             logger.info(f"Failed devices: {', '.join(results['failed'])}")

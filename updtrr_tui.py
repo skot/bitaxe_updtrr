@@ -17,6 +17,8 @@ import time
 import curses
 import threading
 import re
+import subprocess
+import nmap
 from pathlib import Path
 from typing import List, Tuple, Dict, Optional
 from queue import Queue, Empty
@@ -27,6 +29,8 @@ import json
 class DeviceStatus:
     """Represents the status of a device update."""
     PENDING = "PENDING"
+    DISCOVERING = "DISCOVERING"
+    DISCOVERED = "DISCOVERED"
     CHECKING_VERSION = "CHECKING_VERSION"
     UP_TO_DATE = "UP_TO_DATE"
     WWW_UPLOADING = "WWW_UPLOADING"
@@ -417,6 +421,156 @@ class BitaxeUpdaterTUI:
         self.is_running = False
         self.add_event("COMPLETE", "", "All updates completed!")
 
+    def get_local_network_cidr(self) -> Optional[str]:
+        """Get the local network CIDR for scanning."""
+        try:
+            # Get the default gateway
+            if sys.platform == "darwin":  # macOS
+                result = subprocess.run(['route', '-n', 'get', 'default'], 
+                                      capture_output=True, text=True)
+                gateway = None
+                for line in result.stdout.split('\n'):
+                    if 'gateway:' in line:
+                        gateway = line.split(':')[1].strip()
+                        break
+            else:  # Linux
+                result = subprocess.run(['ip', 'route', 'show', 'default'], 
+                                      capture_output=True, text=True)
+                gateway = None
+                for line in result.stdout.split('\n'):
+                    if 'default via' in line:
+                        gateway = line.split()[2]
+                        break
+            
+            if not gateway:
+                self.add_event("ERROR", "", "Could not determine default gateway")
+                return None
+                
+            # Convert gateway to network CIDR (assume /24)
+            network_parts = gateway.split('.')
+            if len(network_parts) == 4:
+                network_cidr = f"{network_parts[0]}.{network_parts[1]}.{network_parts[2]}.0/24"
+                self.add_event("INFO", "", f"Detected local network: {network_cidr}")
+                return network_cidr
+            else:
+                self.add_event("ERROR", "", f"Invalid gateway format: {gateway}")
+                return None
+                
+        except Exception as e:
+            self.add_event("ERROR", "", f"Error detecting local network: {e}")
+            return None
+    
+    def scan_for_bitaxes(self, network_cidr: str = None, timeout: int = 10) -> List[str]:
+        """Scan the local network for Bitaxe devices."""
+        self.add_event("SCAN", "", "🔍 Scanning local network for Bitaxe devices...")
+        
+        if not network_cidr:
+            network_cidr = self.get_local_network_cidr()
+            if not network_cidr:
+                self.add_event("ERROR", "", "Could not determine network to scan")
+                return []
+        
+        self.add_event("SCAN", "", f"Scanning network: {network_cidr}")
+        
+        try:
+            # Initialize nmap scanner
+            nm = nmap.PortScanner()
+            
+            # Scan for devices with port 80 open (web interface)
+            self.add_event("SCAN", "", "Scanning for devices with HTTP service on port 80...")
+            scan_result = nm.scan(network_cidr, '80', timeout=timeout)
+            
+            potential_bitaxes = []
+            
+            # Check each host with port 80 open
+            for host in nm.all_hosts():
+                if nm[host].state() == 'up':
+                    tcp_ports = nm[host]['tcp'] if 'tcp' in nm[host] else {}
+                    if 80 in tcp_ports and tcp_ports[80]['state'] == 'open':
+                        potential_bitaxes.append(host)
+            
+            self.add_event("SCAN", "", f"Found {len(potential_bitaxes)} devices with HTTP service")
+            
+            if not potential_bitaxes:
+                self.add_event("SCAN", "", "No devices with HTTP service found")
+                return []
+            
+            # Verify each potential device is actually a Bitaxe
+            verified_bitaxes = []
+            
+            self.add_event("SCAN", "", "Verifying devices are Bitaxe miners...")
+            for ip in potential_bitaxes:
+                if self.verify_bitaxe_device(ip):
+                    verified_bitaxes.append(ip)
+                    self.add_event("SUCCESS", ip, "✓ Verified Bitaxe device")
+                else:
+                    self.add_event("DEBUG", ip, "✗ Not a Bitaxe device")
+            
+            self.add_event("SUCCESS", "", f"🎯 Found {len(verified_bitaxes)} Bitaxe devices")
+            
+            return verified_bitaxes
+            
+        except Exception as e:
+            self.add_event("ERROR", "", f"Error scanning network: {e}")
+            return []
+    
+    def verify_bitaxe_device(self, ip: str) -> bool:
+        """Verify that a device is actually a Bitaxe by checking its API."""
+        try:
+            # Try to get system info from the device
+            response = self.session.get(
+                f"http://{ip}/api/system/info",
+                timeout=5  # Short timeout for discovery
+            )
+            
+            if response.status_code == 200:
+                info = response.json()
+                
+                # Check for Bitaxe-specific fields
+                bitaxe_indicators = [
+                    'version',        # ESP-Miner version
+                    'asicModel',      # ASIC model (BM1366, BM1368, etc.)
+                    'boardVersion',   # Board version
+                    'chipTemp',       # Chip temperature
+                    'hashRate',       # Hash rate
+                    'power',          # Power consumption
+                ]
+                
+                # Check if device has Bitaxe-specific fields
+                found_indicators = sum(1 for field in bitaxe_indicators if field in info)
+                
+                if found_indicators >= 3:  # Must have at least 3 indicators
+                    # Additional check: look for known ASIC models
+                    asic_model = info.get('asicModel', '').upper()
+                    known_asics = ['BM1366', 'BM1368', 'BM1370', 'BM1397']
+                    
+                    if asic_model in known_asics:
+                        return True
+                    elif found_indicators >= 4:  # High confidence even without ASIC model
+                        return True
+                
+                return False
+            else:
+                return False
+                
+        except Exception:
+            return False
+    
+    def auto_discover_bitaxes(self, network_cidr: str = None) -> List[str]:
+        """Automatically discover Bitaxe devices on the local network."""
+        self.add_event("SCAN", "", "🚀 Starting automatic Bitaxe discovery...")
+        
+        bitaxes = self.scan_for_bitaxes(network_cidr)
+        
+        if bitaxes:
+            self.add_event("SUCCESS", "", f"✅ Discovery complete! Found {len(bitaxes)} Bitaxe devices")
+            for ip in bitaxes:
+                self.add_event("SUCCESS", ip, "Discovered Bitaxe device")
+        else:
+            self.add_event("ERROR", "", "❌ No Bitaxe devices found on the network")
+            
+        return bitaxes
+        
 
 class TUIRenderer:
     """Handles the curses-based TUI rendering."""
@@ -444,6 +598,8 @@ class TUIRenderer:
         """Get color pair for status."""
         color_map = {
             DeviceStatus.PENDING: 3,           # Yellow
+            DeviceStatus.DISCOVERING: 4,       # Blue
+            DeviceStatus.DISCOVERED: 1,        # Green
             DeviceStatus.CHECKING_VERSION: 4,   # Blue
             DeviceStatus.UP_TO_DATE: 1,        # Green
             DeviceStatus.WWW_UPLOADING: 5,     # Cyan
@@ -461,6 +617,8 @@ class TUIRenderer:
         """Get symbol for status."""
         symbol_map = {
             DeviceStatus.PENDING: "...",
+            DeviceStatus.DISCOVERING: "📡",
+            DeviceStatus.DISCOVERED: "🎯",
             DeviceStatus.CHECKING_VERSION: "CHK",
             DeviceStatus.UP_TO_DATE: "✓✓",
             DeviceStatus.WWW_UPLOADING: "WWW",
@@ -775,8 +933,37 @@ def main_tui(stdscr, args):
         updater.validate_binary_file(args.esp_miner_bin)
         updater.validate_binary_file(args.www_bin)
         
-        # Load IP addresses
-        ip_addresses = updater.load_ip_addresses(args.csv_file)
+        # Handle discovery mode or load IP addresses
+        if args.discover:
+            stdscr.clear()
+            stdscr.addstr(0, 0, "🔍 Discovering Bitaxe devices on the network...\n")
+            stdscr.addstr(1, 0, "This may take a few moments...\n")
+            stdscr.refresh()
+            
+            ip_addresses = updater.auto_discover_bitaxes(args.network)
+            
+            if not ip_addresses:
+                stdscr.addstr(3, 0, "❌ No Bitaxe devices discovered\n")
+                stdscr.addstr(4, 0, "Press any key to exit...")
+                stdscr.refresh()
+                stdscr.getch()
+                return
+            else:
+                stdscr.addstr(3, 0, f"✅ Found {len(ip_addresses)} Bitaxe devices\n")
+                for i, ip in enumerate(ip_addresses):
+                    stdscr.addstr(4 + i, 0, f"  - {ip}\n")
+                stdscr.addstr(4 + len(ip_addresses) + 1, 0, "Press any key to continue...")
+                stdscr.refresh()
+                stdscr.getch()
+        else:
+            if not args.csv_file:
+                stdscr.clear()
+                stdscr.addstr(0, 0, "❌ Error: CSV file is required unless using --discover\n")
+                stdscr.addstr(1, 0, "Press any key to exit...")
+                stdscr.refresh()
+                stdscr.getch()
+                return
+            ip_addresses = updater.load_ip_addresses(args.csv_file)
         
         # Initialize TUI
         tui = TUIRenderer(stdscr, updater)
@@ -823,7 +1010,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     
-    parser.add_argument('csv_file', type=Path, help='CSV file containing IP addresses')
+    parser.add_argument('csv_file', type=Path, nargs='?', help='CSV file containing IP addresses (optional with --discover)')
     parser.add_argument('esp_miner_bin', type=Path, help='ESP-Miner firmware binary file')
     parser.add_argument('www_bin', type=Path, help='Web interface binary file')
     parser.add_argument('--timeout', type=int, default=60, 
@@ -834,6 +1021,10 @@ def main():
                        help='Delay between web interface and firmware uploads in seconds (default: 5)')
     parser.add_argument('--force', action='store_true',
                        help='Force update even if device firmware is already up to date')
+    parser.add_argument('--discover', action='store_true',
+                       help='Automatically discover Bitaxe devices on the network')
+    parser.add_argument('--network', type=str,
+                       help='Network CIDR to scan for discovery (e.g., 192.168.1.0/24)')
     parser.add_argument('--debug', action='store_true',
                        help='Run in debug mode (show errors instead of TUI)')
     
@@ -854,9 +1045,19 @@ def main():
             updater.validate_binary_file(args.www_bin)
             print(f"✓ Files validated successfully")
             
-            # Load IP addresses
-            print(f"Loading IP addresses from {args.csv_file}...")
-            ip_addresses = updater.load_ip_addresses(args.csv_file)
+            # Handle discovery mode or load IP addresses
+            if args.discover:
+                print(f"🔍 Discovery mode enabled")
+                ip_addresses = updater.auto_discover_bitaxes(args.network)
+                if not ip_addresses:
+                    print("❌ No Bitaxe devices discovered")
+                    return 1
+            else:
+                if not args.csv_file:
+                    print("❌ Error: CSV file is required unless using --discover")
+                    return 1
+                print(f"Loading IP addresses from {args.csv_file}...")
+                ip_addresses = updater.load_ip_addresses(args.csv_file)
             print(f"✓ Loaded {len(ip_addresses)} IP addresses: {ip_addresses}")
             
             print("Debug mode complete. Use without --debug to run TUI.")
