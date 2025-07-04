@@ -128,6 +128,9 @@ python updtrr.py --discover --scan-timeout 120 esp-miner.bin www.bin
 # Discover and save to CSV file
 python updtrr.py --discover --save-discovered discovered_devices.csv esp-miner.bin www.bin
 
+# Discover and save with detailed device information
+python updtrr.py --discover --save-discovered detailed_devices.csv --scan-timeout 120 esp-miner.bin www.bin
+
 # TUI with discovery
 python updtrr_tui.py --discover esp-miner.bin www.bin
 ```
@@ -138,6 +141,29 @@ python updtrr_tui.py --discover esp-miner.bin www.bin
 - Network access to scan local subnet
 
 **Note:** For large networks (e.g., /24 subnets with 254 hosts), you may need to increase the scan timeout using `--scan-timeout 120` or higher to avoid timeout errors.
+
+### Enhanced CSV Output
+
+When using `--save-discovered`, the script generates a detailed CSV file with comments for each discovered device:
+
+```csv
+# Discovered Bitaxe devices
+# IP Address, Hostname, Board Version, Device Model, ASIC Model, Firmware Version
+#
+# bitaxe402 | 402 | Supra | BM1368 | v2.9.0
+192.168.1.44
+#
+# bitaxeHydro601 | 601 | Gamma | BM1370 | v2.9.0
+192.168.1.234
+#
+```
+
+Each device entry includes:
+- **Hostname**: Device network name
+- **Board Version**: Hardware board revision
+- **Device Model**: Bitaxe model (Ultra, Supra, Gamma, etc.)
+- **ASIC Model**: Mining chip model (BM1366, BM1368, BM1370, etc.)
+- **Firmware Version**: Current ESP-Miner version
 
 ## TUI Features
 

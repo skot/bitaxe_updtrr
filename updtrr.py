@@ -650,6 +650,102 @@ class BitaxeUpdater:
             logger.debug(f"Error verifying device at {ip}: {e}")
             return False
     
+    def get_device_details(self, ip: str) -> Dict[str, str]:
+        """
+        Get detailed information about a Bitaxe device.
+        
+        Args:
+            ip: IP address of the device
+            
+        Returns:
+            Dictionary with device details (hostname, boardVersion, deviceModel, etc.)
+        """
+        try:
+            # Get system info
+            response = self.session.get(
+                f"http://{ip}/api/system/info",
+                timeout=10  # Short timeout for info gathering
+            )
+            
+            if response.status_code == 200:
+                info = response.json()
+                details = {
+                    'hostname': info.get('hostname', 'unknown'),
+                    'boardVersion': info.get('boardVersion', 'unknown'),
+                    'version': info.get('version', 'unknown'),
+                    'asicModel': info.get('ASICModel', 'unknown'),
+                    'deviceModel': 'unknown'  # Default value
+                }
+                
+                # Try to get device model from ASIC endpoint
+                try:
+                    asic_response = self.session.get(
+                        f"http://{ip}/api/system/asic",
+                        timeout=10
+                    )
+                    if asic_response.status_code == 200:
+                        asic_info = asic_response.json()
+                        details['deviceModel'] = asic_info.get('deviceModel', 'unknown')
+                except:
+                    pass  # Keep default 'unknown' if ASIC endpoint fails
+                
+                return details
+            else:
+                logger.warning(f"Failed to get device details for {ip}: HTTP {response.status_code}")
+                return {
+                    'hostname': 'unknown',
+                    'boardVersion': 'unknown', 
+                    'version': 'unknown',
+                    'asicModel': 'unknown',
+                    'deviceModel': 'unknown'
+                }
+                
+        except Exception as e:
+            logger.warning(f"Error getting device details for {ip}: {e}")
+            return {
+                'hostname': 'unknown',
+                'boardVersion': 'unknown',
+                'version': 'unknown', 
+                'asicModel': 'unknown',
+                'deviceModel': 'unknown'
+            }
+    
+    def save_discovered_devices(self, ip_addresses: List[str], filename: Path) -> None:
+        """
+        Save discovered devices to CSV file with detailed comments.
+        
+        Args:
+            ip_addresses: List of discovered IP addresses
+            filename: Path to save the CSV file
+        """
+        logger.info(f"Saving discovered devices to {filename}")
+        logger.info("Gathering device details for comments...")
+        
+        # Collect device details
+        device_details = {}
+        for i, ip in enumerate(ip_addresses, 1):
+            logger.info(f"Getting details for device {i}/{len(ip_addresses)}: {ip}")
+            device_details[ip] = self.get_device_details(ip)
+        
+        # Write CSV file with detailed comments
+        with open(filename, 'w', newline='') as f:
+            writer = csv.writer(f)
+            
+            # Write header
+            writer.writerow(['# Discovered Bitaxe devices'])
+            writer.writerow(['# IP Address, Hostname, Board Version, Device Model, ASIC Model, Firmware Version'])
+            writer.writerow(['#'])
+            
+            # Write devices with comments
+            for ip in ip_addresses:
+                details = device_details[ip]
+                comment = f"# {details['hostname']} | {details['boardVersion']} | {details['deviceModel']} | {details['asicModel']} | {details['version']}"
+                writer.writerow([comment])
+                writer.writerow([ip])
+                writer.writerow(['#'])  # Empty comment line for readability
+        
+        logger.info(f"✓ Saved {len(ip_addresses)} devices with details to {filename}")
+    
     def auto_discover_bitaxes(self, network_cidr: str = None, scan_timeout: int = 60) -> List[str]:
         """
         Automatically discover Bitaxe devices on the local network.
@@ -733,13 +829,7 @@ Examples:
             
             # Save discovered devices if requested
             if args.save_discovered:
-                logger.info(f"Saving discovered devices to {args.save_discovered}")
-                with open(args.save_discovered, 'w', newline='') as f:
-                    writer = csv.writer(f)
-                    writer.writerow(['# Discovered Bitaxe devices'])
-                    for ip in ip_addresses:
-                        writer.writerow([ip])
-                logger.info(f"✓ Saved {len(ip_addresses)} devices to {args.save_discovered}")
+                updater.save_discovered_devices(ip_addresses, args.save_discovered)
         else:
             # Load IP addresses from CSV file
             if not args.csv_file:

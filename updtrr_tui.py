@@ -572,6 +572,102 @@ class BitaxeUpdaterTUI:
             self.add_event("ERROR", "", "❌ No Bitaxe devices found on the network")
             
         return bitaxes
+    
+    def get_device_details(self, ip: str) -> Dict[str, str]:
+        """
+        Get detailed information about a Bitaxe device.
+        
+        Args:
+            ip: IP address of the device
+            
+        Returns:
+            Dictionary with device details (hostname, boardVersion, deviceModel, etc.)
+        """
+        try:
+            # Get system info
+            response = self.session.get(
+                f"http://{ip}/api/system/info",
+                timeout=10  # Short timeout for info gathering
+            )
+            
+            if response.status_code == 200:
+                info = response.json()
+                details = {
+                    'hostname': info.get('hostname', 'unknown'),
+                    'boardVersion': info.get('boardVersion', 'unknown'),
+                    'version': info.get('version', 'unknown'),
+                    'asicModel': info.get('ASICModel', 'unknown'),
+                    'deviceModel': 'unknown'  # Default value
+                }
+                
+                # Try to get device model from ASIC endpoint
+                try:
+                    asic_response = self.session.get(
+                        f"http://{ip}/api/system/asic",
+                        timeout=10
+                    )
+                    if asic_response.status_code == 200:
+                        asic_info = asic_response.json()
+                        details['deviceModel'] = asic_info.get('deviceModel', 'unknown')
+                except:
+                    pass  # Keep default 'unknown' if ASIC endpoint fails
+                
+                return details
+            else:
+                self.add_event("ERROR", ip, f"Failed to get device details: HTTP {response.status_code}")
+                return {
+                    'hostname': 'unknown',
+                    'boardVersion': 'unknown', 
+                    'version': 'unknown',
+                    'asicModel': 'unknown',
+                    'deviceModel': 'unknown'
+                }
+                
+        except Exception as e:
+            self.add_event("ERROR", ip, f"Error getting device details: {e}")
+            return {
+                'hostname': 'unknown',
+                'boardVersion': 'unknown',
+                'version': 'unknown', 
+                'asicModel': 'unknown',
+                'deviceModel': 'unknown'
+            }
+    
+    def save_discovered_devices(self, ip_addresses: List[str], filename: Path) -> None:
+        """
+        Save discovered devices to CSV file with detailed comments.
+        
+        Args:
+            ip_addresses: List of discovered IP addresses
+            filename: Path to save the CSV file
+        """
+        self.add_event("INFO", "", f"Saving discovered devices to {filename}")
+        self.add_event("INFO", "", "Gathering device details for comments...")
+        
+        # Collect device details
+        device_details = {}
+        for i, ip in enumerate(ip_addresses, 1):
+            self.add_event("INFO", "", f"Getting details for device {i}/{len(ip_addresses)}: {ip}")
+            device_details[ip] = self.get_device_details(ip)
+        
+        # Write CSV file with detailed comments
+        with open(filename, 'w', newline='') as f:
+            writer = csv.writer(f)
+            
+            # Write header
+            writer.writerow(['# Discovered Bitaxe devices'])
+            writer.writerow(['# IP Address, Hostname, Board Version, Device Model, ASIC Model, Firmware Version'])
+            writer.writerow(['#'])
+            
+            # Write devices with comments
+            for ip in ip_addresses:
+                details = device_details[ip]
+                comment = f"# {details['hostname']} | {details['boardVersion']} | {details['deviceModel']} | {details['asicModel']} | {details['version']}"
+                writer.writerow([comment])
+                writer.writerow([ip])
+                writer.writerow(['#'])  # Empty comment line for readability
+        
+        self.add_event("SUCCESS", "", f"✓ Saved {len(ip_addresses)} devices with details to {filename}")
         
 
 class TUIRenderer:
@@ -954,7 +1050,15 @@ def main_tui(stdscr, args):
                 stdscr.addstr(3, 0, f"✅ Found {len(ip_addresses)} Bitaxe devices\n")
                 for i, ip in enumerate(ip_addresses):
                     stdscr.addstr(4 + i, 0, f"  - {ip}\n")
-                stdscr.addstr(4 + len(ip_addresses) + 1, 0, "Press any key to continue...")
+                
+                # Save discovered devices if requested
+                if args.save_discovered:
+                    stdscr.addstr(4 + len(ip_addresses) + 1, 0, f"💾 Saving devices to {args.save_discovered}...\n")
+                    stdscr.refresh()
+                    updater.save_discovered_devices(ip_addresses, args.save_discovered)
+                    stdscr.addstr(4 + len(ip_addresses) + 2, 0, "✅ Devices saved successfully!\n")
+                
+                stdscr.addstr(4 + len(ip_addresses) + 3, 0, "Press any key to continue...")
                 stdscr.refresh()
                 stdscr.getch()
         else:
@@ -1029,6 +1133,8 @@ def main():
                        help='Network CIDR to scan for discovery (e.g., 192.168.1.0/24)')
     parser.add_argument('--scan-timeout', type=int, default=60,
                        help='Timeout for network scan in seconds (default: 60)')
+    parser.add_argument('--save-discovered', type=Path,
+                       help='Save discovered devices to CSV file')
     parser.add_argument('--debug', action='store_true',
                        help='Run in debug mode (show errors instead of TUI)')
     
@@ -1056,6 +1162,12 @@ def main():
                 if not ip_addresses:
                     print("❌ No Bitaxe devices discovered")
                     return 1
+                
+                # Save discovered devices if requested
+                if args.save_discovered:
+                    print(f"💾 Saving devices to {args.save_discovered}...")
+                    updater.save_discovered_devices(ip_addresses, args.save_discovered)
+                    print("✅ Devices saved successfully!")
             else:
                 if not args.csv_file:
                     print("❌ Error: CSV file is required unless using --discover")
