@@ -460,7 +460,7 @@ class BitaxeUpdaterTUI:
             self.add_event("ERROR", "", f"Error detecting local network: {e}")
             return None
     
-    def scan_for_bitaxes(self, network_cidr: str = None, timeout: int = 10) -> List[str]:
+    def scan_for_bitaxes(self, network_cidr: str = None, timeout: int = 60) -> List[str]:
         """Scan the local network for Bitaxe devices."""
         self.add_event("SCAN", "", "🔍 Scanning local network for Bitaxe devices...")
         
@@ -470,7 +470,7 @@ class BitaxeUpdaterTUI:
                 self.add_event("ERROR", "", "Could not determine network to scan")
                 return []
         
-        self.add_event("SCAN", "", f"Scanning network: {network_cidr}")
+        self.add_event("SCAN", "", f"Scanning network: {network_cidr} (timeout: {timeout}s)")
         
         try:
             # Initialize nmap scanner
@@ -478,7 +478,9 @@ class BitaxeUpdaterTUI:
             
             # Scan for devices with port 80 open (web interface)
             self.add_event("SCAN", "", "Scanning for devices with HTTP service on port 80...")
-            scan_result = nm.scan(network_cidr, '80', timeout=timeout)
+            # Use optimized nmap arguments for faster scanning
+            scan_args = f'-T4 --host-timeout {timeout}s --open'
+            scan_result = nm.scan(network_cidr, '80', arguments=scan_args)
             
             potential_bitaxes = []
             
@@ -556,11 +558,11 @@ class BitaxeUpdaterTUI:
         except Exception:
             return False
     
-    def auto_discover_bitaxes(self, network_cidr: str = None) -> List[str]:
+    def auto_discover_bitaxes(self, network_cidr: str = None, scan_timeout: int = 60) -> List[str]:
         """Automatically discover Bitaxe devices on the local network."""
         self.add_event("SCAN", "", "🚀 Starting automatic Bitaxe discovery...")
         
-        bitaxes = self.scan_for_bitaxes(network_cidr)
+        bitaxes = self.scan_for_bitaxes(network_cidr, scan_timeout)
         
         if bitaxes:
             self.add_event("SUCCESS", "", f"✅ Discovery complete! Found {len(bitaxes)} Bitaxe devices")
@@ -940,7 +942,7 @@ def main_tui(stdscr, args):
             stdscr.addstr(1, 0, "This may take a few moments...\n")
             stdscr.refresh()
             
-            ip_addresses = updater.auto_discover_bitaxes(args.network)
+            ip_addresses = updater.auto_discover_bitaxes(args.network, args.scan_timeout)
             
             if not ip_addresses:
                 stdscr.addstr(3, 0, "❌ No Bitaxe devices discovered\n")
@@ -1025,6 +1027,8 @@ def main():
                        help='Automatically discover Bitaxe devices on the network')
     parser.add_argument('--network', type=str,
                        help='Network CIDR to scan for discovery (e.g., 192.168.1.0/24)')
+    parser.add_argument('--scan-timeout', type=int, default=60,
+                       help='Timeout for network scan in seconds (default: 60)')
     parser.add_argument('--debug', action='store_true',
                        help='Run in debug mode (show errors instead of TUI)')
     
@@ -1048,7 +1052,7 @@ def main():
             # Handle discovery mode or load IP addresses
             if args.discover:
                 print(f"🔍 Discovery mode enabled")
-                ip_addresses = updater.auto_discover_bitaxes(args.network)
+                ip_addresses = updater.auto_discover_bitaxes(args.network, args.scan_timeout)
                 if not ip_addresses:
                     print("❌ No Bitaxe devices discovered")
                     return 1

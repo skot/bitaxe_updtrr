@@ -84,6 +84,7 @@ python updtrr_tui.py --timeout 120 --device-delay 15 --upload-delay 10 devices.c
 - `--discover`: Automatically discover Bitaxe devices on the network
 - `--network`: Network CIDR to scan for discovery (e.g., 192.168.1.0/24)
 - `--save-discovered`: Save discovered devices to CSV file (CLI only)
+- `--scan-timeout`: Timeout for network scan in seconds (default: 60)
 - `--debug`: Run in debug mode (TUI only)
 
 ### Version Checking
@@ -121,6 +122,9 @@ python updtrr.py --discover esp-miner.bin www.bin
 # Discover on specific network
 python updtrr.py --discover --network 192.168.1.0/24 esp-miner.bin www.bin
 
+# Discover with extended timeout for large networks
+python updtrr.py --discover --scan-timeout 120 esp-miner.bin www.bin
+
 # Discover and save to CSV file
 python updtrr.py --discover --save-discovered discovered_devices.csv esp-miner.bin www.bin
 
@@ -132,6 +136,8 @@ python updtrr_tui.py --discover esp-miner.bin www.bin
 - `nmap` must be installed on your system
 - Python package `python-nmap` (installed via requirements.txt)
 - Network access to scan local subnet
+
+**Note:** For large networks (e.g., /24 subnets with 254 hosts), you may need to increase the scan timeout using `--scan-timeout 120` or higher to avoid timeout errors.
 
 ## TUI Features
 

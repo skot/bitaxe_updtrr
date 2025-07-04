@@ -530,13 +530,13 @@ class BitaxeUpdater:
             logger.error(f"Error detecting local network: {e}")
             return None
     
-    def scan_for_bitaxes(self, network_cidr: str = None, timeout: int = 10) -> List[str]:
+    def scan_for_bitaxes(self, network_cidr: str = None, timeout: int = 60) -> List[str]:
         """
         Scan the local network for Bitaxe devices.
         
         Args:
             network_cidr: Network CIDR to scan (e.g., "192.168.1.0/24")
-            timeout: Timeout for each host check
+            timeout: Timeout for network scan in seconds
             
         Returns:
             List of IP addresses of discovered Bitaxe devices
@@ -549,15 +549,17 @@ class BitaxeUpdater:
                 logger.error("Could not determine network to scan")
                 return []
         
-        logger.info(f"Scanning network: {network_cidr}")
+        logger.info(f"Scanning network: {network_cidr} (timeout: {timeout}s)")
         
         try:
             # Initialize nmap scanner
             nm = nmap.PortScanner()
             
             # Scan for devices with port 80 open (web interface)
+            # Use optimized arguments for faster scanning
             logger.info("Scanning for devices with HTTP service on port 80...")
-            scan_result = nm.scan(network_cidr, '80', timeout=timeout)
+            scan_args = f"-T4 --host-timeout {timeout}s --open"
+            scan_result = nm.scan(network_cidr, '80', arguments=scan_args)
             
             potential_bitaxes = []
             
@@ -648,19 +650,20 @@ class BitaxeUpdater:
             logger.debug(f"Error verifying device at {ip}: {e}")
             return False
     
-    def auto_discover_bitaxes(self, network_cidr: str = None) -> List[str]:
+    def auto_discover_bitaxes(self, network_cidr: str = None, scan_timeout: int = 60) -> List[str]:
         """
         Automatically discover Bitaxe devices on the local network.
         
         Args:
             network_cidr: Network CIDR to scan (auto-detected if not provided)
+            scan_timeout: Timeout for network scan in seconds
             
         Returns:
             List of discovered Bitaxe IP addresses
         """
         logger.info("🚀 Starting automatic Bitaxe discovery...")
         
-        bitaxes = self.scan_for_bitaxes(network_cidr)
+        bitaxes = self.scan_for_bitaxes(network_cidr, scan_timeout)
         
         if bitaxes:
             logger.info(f"✅ Discovery complete! Found {len(bitaxes)} Bitaxe devices:")
@@ -705,6 +708,8 @@ Examples:
                        help='Network CIDR to scan for discovery (e.g., 192.168.1.0/24)')
     parser.add_argument('--save-discovered', type=Path,
                        help='Save discovered devices to CSV file')
+    parser.add_argument('--scan-timeout', type=int, default=60,
+                       help='Timeout for network scan in seconds (default: 60)')
     
     args = parser.parse_args()
     
@@ -720,7 +725,7 @@ Examples:
         # Handle discovery mode
         if args.discover:
             logger.info("🔍 Discovery mode enabled")
-            ip_addresses = updater.auto_discover_bitaxes(args.network)
+            ip_addresses = updater.auto_discover_bitaxes(args.network, args.scan_timeout)
             
             if not ip_addresses:
                 logger.error("No Bitaxe devices discovered")
