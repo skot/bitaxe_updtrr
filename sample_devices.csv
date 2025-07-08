@@ -3,7 +3,8 @@
 # Lines starting with # are ignored
 
 # Simple list format:
-192.168.1.45
+192.168.1.245
+192.168.1.107
 
 # Or CSV format (first column will be used):
 # IP,Device Name,Notes

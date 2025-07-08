@@ -867,8 +867,10 @@ Examples:
         
         # Modify the update_device call to use the upload delay
         original_update_device = updater.update_device
-        def update_device_with_delay(ip, fw_file, www_file):
-            return original_update_device(ip, fw_file, www_file, delay=args.upload_delay, force=args.force)
+        def update_device_with_delay(ip, fw_file, www_file, delay=None, force=False):
+            # Use the specified delay or default from args
+            actual_delay = delay if delay is not None else args.upload_delay
+            return original_update_device(ip, fw_file, www_file, delay=actual_delay, force=force)
         updater.update_device = update_device_with_delay
         
         # Update all devices
