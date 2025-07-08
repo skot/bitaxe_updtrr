@@ -1,16 +1,6 @@
 # updtrr - Bitaxe Firmware and Web Interface Updater
 
-A Python script to update ESP-Miner firmware and web interface files on multip- **Device status grid** with visual symbols:
-  - ⏳ Pending
-  - 📡 Discovering devices
-  - 🎯 Device discovered
-  - 🔍 Checking version
-  - ✅ Up to date
-  - 📤 Uploading web interface
-  - ⚡ Uploading firmware
-  - ✓ Success
-  - ✗ Failed
-  - 🎉 Completed devices simultaneously. Includes both command-line and beautiful TUI (Text User Interface) versions.
+A Python script to update ESP-Miner firmware and web interface files on multiple Bitaxe devices simultaneously.
 
 ## Features
 
@@ -18,7 +8,6 @@ A Python script to update ESP-Miner firmware and web interface files on multip- 
 - **Version checking** - Automatically detects if devices are already up to date
 - Uploads ESP-Miner firmware via `/api/system/OTA` endpoint
 - Uploads web interface files via `/api/system/OTAWWW` endpoint
-- **Beautiful TUI (Text User Interface)** with real-time status updates
 - Comprehensive logging with both console and file output
 - Configurable timeouts and delays
 - Progress tracking and detailed error reporting
@@ -44,17 +33,7 @@ chmod +x updtrr.py
 
 ## Usage
 
-### TUI (Text User Interface) - Recommended
-
-For a beautiful real-time interface with live status updates:
-
-```bash
-python updtrr_tui.py devices.csv esp-miner.bin www.bin
-```
-
-### Command Line Interface
-
-For traditional command-line operation:
+### Basic Usage
 
 ```bash
 python updtrr.py devices.csv esp-miner.bin www.bin
@@ -62,10 +41,8 @@ python updtrr.py devices.csv esp-miner.bin www.bin
 
 ### Advanced Usage with Options
 
-Both versions support the same options:
-
 ```bash
-python updtrr_tui.py --timeout 120 --device-delay 15 --upload-delay 10 devices.csv firmware.bin web.bin
+python updtrr.py --timeout 120 --device-delay 15 --upload-delay 10 devices.csv firmware.bin web.bin
 ```
 
 ### Command Line Arguments
@@ -80,12 +57,11 @@ python updtrr_tui.py --timeout 120 --device-delay 15 --upload-delay 10 devices.c
 - `--device-delay`: Delay between device updates in seconds (default: 10)
 - `--upload-delay`: Delay between web interface and firmware uploads in seconds (default: 5)
 - `--force`: Force update even if device firmware is already up to date
-- `--check-versions`: Only check versions without updating devices (CLI only)
+- `--check-versions`: Only check versions without updating devices
 - `--discover`: Automatically discover Bitaxe devices on the network
 - `--network`: Network CIDR to scan for discovery (e.g., 192.168.1.0/24)
-- `--save-discovered`: Save discovered devices to CSV file (CLI only)
+- `--save-discovered`: Save discovered devices to CSV file
 - `--scan-timeout`: Timeout for network scan in seconds (default: 60)
-- `--debug`: Run in debug mode (TUI only)
 
 ### Version Checking
 
@@ -103,7 +79,6 @@ python updtrr.py --check-versions devices.csv esp-miner.bin www.bin
 
 # Force update even if versions match
 python updtrr.py --force devices.csv esp-miner.bin www.bin
-python updtrr_tui.py --force devices.csv esp-miner.bin www.bin
 ```
 
 ### Automatic Discovery
@@ -130,9 +105,6 @@ python updtrr.py --discover --save-discovered discovered_devices.csv esp-miner.b
 
 # Discover and save with detailed device information
 python updtrr.py --discover --save-discovered detailed_devices.csv --scan-timeout 120 esp-miner.bin www.bin
-
-# TUI with discovery
-python updtrr_tui.py --discover esp-miner.bin www.bin
 ```
 
 **Requirements for Discovery:**
@@ -164,26 +136,6 @@ Each device entry includes:
 - **Device Model**: Bitaxe model (Ultra, Supra, Gamma, etc.)
 - **ASIC Model**: Mining chip model (BM1366, BM1368, BM1370, etc.)
 - **Firmware Version**: Current ESP-Miner version
-
-## TUI Features
-
-The TUI version (`updtrr_tui.py`) provides:
-
-- **Real-time status display** with colored indicators
-- **Live progress tracking** showing current device and overall progress
-- **Upload progress bars** for each image (WWW and firmware) with percentage and byte counts
-- **Device status grid** with visual symbols:
-  - ⏳ Pending
-  - � Checking version
-  - ✅ Up to date
-  - �📤 Uploading web interface
-  - ⚡ Uploading firmware
-  - ✓ Success
-  - ✗ Failed
-  - 🎉 Completed
-- **Activity log** showing recent events and messages
-- **Statistics panel** with success/failure counts and elapsed time
-- **Interactive controls** (press 'q' to quit, 'r' to refresh)
 
 ## CSV File Format
 
@@ -238,24 +190,19 @@ The script handles various error conditions:
 
 ## Examples
 
-### Update 3 devices with TUI (recommended):
-```bash
-python updtrr_tui.py my_devices.csv esp-miner-v2.1.0.bin www-v2.1.0.bin
-```
-
-### Update 3 devices with command line:
+### Update 3 devices:
 ```bash
 python updtrr.py my_devices.csv esp-miner-v2.1.0.bin www-v2.1.0.bin
 ```
 
 ### Update with longer timeouts for slow networks:
 ```bash
-python updtrr_tui.py --timeout 180 --device-delay 20 devices.csv firmware.bin web.bin
+python updtrr.py --timeout 180 --device-delay 20 devices.csv firmware.bin web.bin
 ```
 
 ### Quick update with minimal delays:
 ```bash
-python updtrr_tui.py --device-delay 3 --upload-delay 2 devices.csv firmware.bin web.bin
+python updtrr.py --device-delay 3 --upload-delay 2 devices.csv firmware.bin web.bin
 ```
 
 ## Exit Codes
