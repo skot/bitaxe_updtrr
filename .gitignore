@@ -212,3 +212,5 @@ $RECYCLE.BIN/
 # Test files and directories
 test_results/
 temp_test_files/
+test_*.py
+updtrr_tui.py
