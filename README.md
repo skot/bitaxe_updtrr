@@ -42,14 +42,14 @@ python updtrr.py devices.csv esp-miner.bin www.bin
 ### Advanced Usage with Options
 
 ```bash
-python updtrr.py --timeout 120 --device-delay 15 --upload-delay 10 devices.csv firmware.bin web.bin
+python updtrr.py --timeout 120 --device-delay 15 --upload-delay 10 devices.csv firmware.bin www.bin
 ```
 
 ### Command Line Arguments
 
-- `csv_file`: Path to CSV file containing IP addresses
-- `esp_miner_bin`: Path to the ESP-Miner firmware binary file
-- `www_bin`: Path to the web interface binary file
+- `csv_file`: Path to CSV file containing IP addresses (optional with `--discover`)
+- `esp_miner_bin`: Path to the ESP-Miner firmware binary file (optional with `--save-discovered`)
+- `www_bin`: Path to the web interface binary file (optional with `--save-discovered`)
 
 ### Optional Arguments
 
@@ -60,7 +60,7 @@ python updtrr.py --timeout 120 --device-delay 15 --upload-delay 10 devices.csv f
 - `--check-versions`: Only check versions without updating devices
 - `--discover`: Automatically discover Bitaxe devices on the network
 - `--network`: Network CIDR to scan for discovery (e.g., 192.168.1.0/24)
-- `--save-discovered`: Save discovered devices to CSV file
+- `--save-discovered`: Save discovered devices to CSV file (can be used without firmware files)
 - `--scan-timeout`: Timeout for network scan in seconds (default: 60)
 
 ### Version Checking
@@ -88,23 +88,24 @@ The updater can automatically discover Bitaxe devices on your network:
 1. **Network scanning** using nmap to find devices with HTTP service
 2. **Device verification** via API calls to confirm they are Bitaxe miners
 3. **Automatic detection** of local network CIDR (usually /24)
+4. **Detailed device information** including hostname, board version, device model, and ASIC model
 
 Examples:
 ```bash
-# Discover devices automatically
-python updtrr.py --discover esp-miner.bin www.bin
+# Just discover and save devices (no firmware needed)
+python updtrr.py --discover --save-discovered discovered_devices.csv
 
 # Discover on specific network
-python updtrr.py --discover --network 192.168.1.0/24 esp-miner.bin www.bin
+python updtrr.py --discover --network 192.168.1.0/24 --save-discovered devices.csv
 
 # Discover with extended timeout for large networks
-python updtrr.py --discover --scan-timeout 120 esp-miner.bin www.bin
+python updtrr.py --discover --scan-timeout 120 --save-discovered devices.csv
 
-# Discover and save to CSV file
-python updtrr.py --discover --save-discovered discovered_devices.csv esp-miner.bin www.bin
+# Discover and proceed with update
+python updtrr.py --discover esp-miner.bin www.bin
 
-# Discover and save with detailed device information
-python updtrr.py --discover --save-discovered detailed_devices.csv --scan-timeout 120 esp-miner.bin www.bin
+# Discover, save, and update devices
+python updtrr.py --discover --save-discovered devices.csv esp-miner.bin www.bin
 ```
 
 **Requirements for Discovery:**
@@ -136,6 +137,13 @@ Each device entry includes:
 - **Device Model**: Bitaxe model (Ultra, Supra, Gamma, etc.)
 - **ASIC Model**: Mining chip model (BM1366, BM1368, BM1370, etc.)
 - **Firmware Version**: Current ESP-Miner version
+
+You can quickly scan and inventory your Bitaxe devices without updating them using:
+```bash
+python updtrr.py --discover --save-discovered devices.csv
+```
+
+This discovery-only mode doesn't require firmware files and will exit after saving the device information.
 
 ## CSV File Format
 

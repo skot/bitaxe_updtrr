@@ -762,9 +762,18 @@ class BitaxeUpdater:
         bitaxes = self.scan_for_bitaxes(network_cidr, scan_timeout)
         
         if bitaxes:
-            logger.info(f"✅ Discovery complete! Found {len(bitaxes)} Bitaxe devices:")
+            logger.info(f"\n✨ Discovery complete! Found {len(bitaxes)} Bitaxe device(s):")
             for ip in bitaxes:
-                logger.info(f"  - {ip}")
+                device_info = self.get_device_version(ip)
+                if device_info:
+                    logger.info(f"\n📡 Device {ip}:")
+                    logger.info(f"   Hostname: {device_info.get('hostname', 'unknown')}")
+                    logger.info(f"   Board Version: {device_info.get('boardVersion', 'unknown')}")
+                    logger.info(f"   Device Model: {device_info.get('deviceModel', 'unknown')}")
+                    logger.info(f"   ASIC Model: {device_info.get('asicModel', 'unknown')}")
+                    logger.info(f"   Firmware Version: {device_info.get('version', 'unknown')}")
+                else:
+                    logger.warning(f"\n⚠️  Device {ip}: Could not retrieve device information")
         else:
             logger.warning("❌ No Bitaxe devices found on the network")
             
@@ -782,12 +791,13 @@ Examples:
   python updtrr.py --timeout 120 --device-delay 15 devices.csv firmware.bin web.bin
   python updtrr.py --discover --network 192.168.1.0/24 esp-miner.bin www.bin
   python updtrr.py --check-versions devices.csv esp-miner.bin www.bin
+  python updtrr.py --discover --save-discovered devices.csv
         """
     )
     
     parser.add_argument('csv_file', type=Path, nargs='?', help='CSV file containing IP addresses (optional with --discover)')
-    parser.add_argument('esp_miner_bin', type=Path, help='ESP-Miner firmware binary file')
-    parser.add_argument('www_bin', type=Path, help='Web interface binary file')
+    parser.add_argument('esp_miner_bin', type=Path, nargs='?', help='ESP-Miner firmware binary file (not needed with --save-discovered)')
+    parser.add_argument('www_bin', type=Path, nargs='?', help='Web interface binary file (not needed with --save-discovered)')
     parser.add_argument('--timeout', type=int, default=60, 
                        help='HTTP request timeout in seconds (default: 60)')
     parser.add_argument('--device-delay', type=int, default=10,
@@ -812,12 +822,7 @@ Examples:
     try:
         # Initialize updater
         updater = BitaxeUpdater(timeout=args.timeout)
-        
-        # Validate input files
-        logger.info("Validating input files...")
-        updater.validate_binary_file(args.esp_miner_bin)
-        updater.validate_binary_file(args.www_bin)
-        
+
         # Handle discovery mode
         if args.discover:
             logger.info("🔍 Discovery mode enabled")
@@ -830,12 +835,23 @@ Examples:
             # Save discovered devices if requested
             if args.save_discovered:
                 updater.save_discovered_devices(ip_addresses, args.save_discovered)
+                logger.info(f"✓ Discovered devices saved to {args.save_discovered}")
+                sys.exit(0)  # Exit after saving in discovery-only mode
         else:
             # Load IP addresses from CSV file
             if not args.csv_file:
                 logger.error("CSV file is required unless using --discover")
                 sys.exit(1)
             ip_addresses = updater.load_ip_addresses(args.csv_file)
+        
+        # Validate input files when updating
+        if not args.save_discovered:  # Skip validation in discovery-only mode
+            if not args.esp_miner_bin or not args.www_bin:
+                logger.error("ESP-Miner binary and web interface files are required for updating")
+                sys.exit(1)
+            logger.info("Validating input files...")
+            updater.validate_binary_file(args.esp_miner_bin)
+            updater.validate_binary_file(args.www_bin)
         
         # Check if we're only checking versions
         if args.check_versions:
@@ -878,7 +894,7 @@ Examples:
                                            device_delay=args.device_delay, force=args.force)
         
         # Print summary
-        logger.info(f"\n{'='*50}")
+        logger.info(f"{'='*50}")
         logger.info("UPDATE SUMMARY")
         logger.info(f"{'='*50}")
         logger.info(f"Total devices: {results['total']}")
