@@ -764,7 +764,7 @@ class BitaxeUpdater:
         if bitaxes:
             logger.info(f"\n✨ Discovery complete! Found {len(bitaxes)} Bitaxe device(s):")
             for ip in bitaxes:
-                device_info = self.get_device_version(ip)
+                device_info = self.get_device_details(ip)
                 if device_info:
                     logger.info(f"\n📡 Device {ip}:")
                     logger.info(f"   Hostname: {device_info.get('hostname', 'unknown')}")
