@@ -7,12 +7,12 @@ by reading IP addresses from a CSV file and sending the binary files via HTTP PO
 to the respective OTA endpoints.
 
 Usage:
-    python updtrr.py <csv_file> <esp-miner.bin> <www.bin>
+    python updtrr.py [csv_file] [esp-miner.bin] [www.bin]
 
 Arguments:
-    csv_file: Path to CSV file containing IP addresses (one per line or in first column)
-    esp-miner.bin: Path to the ESP-Miner firmware binary file
-    www.bin: Path to the web interface binary file
+    csv_file: Path to CSV file containing IP addresses (defaults to discovery when omitted)
+    esp-miner.bin: Path to the ESP-Miner firmware binary file (default: esp-miner.bin)
+    www.bin: Path to the web interface binary file (default: www.bin)
 """
 
 import sys
@@ -782,12 +782,17 @@ class BitaxeUpdater:
 
 def main():
     """Main function."""
+    default_esp_miner_bin = Path("esp-miner.bin")
+    default_www_bin = Path("www.bin")
+
     parser = argparse.ArgumentParser(
         description="Update ESP-Miner firmware and web interface on multiple Bitaxe devices",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+  python updtrr.py
   python updtrr.py devices.csv esp-miner.bin www.bin
+  python updtrr.py devices.csv
   python updtrr.py --timeout 120 --device-delay 15 devices.csv firmware.bin web.bin
   python updtrr.py --discover --network 192.168.1.0/24 esp-miner.bin www.bin
   python updtrr.py --check-versions devices.csv esp-miner.bin www.bin
@@ -795,9 +800,9 @@ Examples:
         """
     )
     
-    parser.add_argument('csv_file', type=Path, nargs='?', help='CSV file containing IP addresses (optional with --discover)')
-    parser.add_argument('esp_miner_bin', type=Path, nargs='?', help='ESP-Miner firmware binary file (not needed with --save-discovered)')
-    parser.add_argument('www_bin', type=Path, nargs='?', help='Web interface binary file (not needed with --save-discovered)')
+    parser.add_argument('csv_file', type=Path, nargs='?', help='CSV file containing IP addresses (defaults to discovery when omitted)')
+    parser.add_argument('esp_miner_bin', type=Path, nargs='?', help=f'ESP-Miner firmware binary file (default: {default_esp_miner_bin})')
+    parser.add_argument('www_bin', type=Path, nargs='?', help=f'Web interface binary file (default: {default_www_bin})')
     parser.add_argument('--timeout', type=int, default=60, 
                        help='HTTP request timeout in seconds (default: 60)')
     parser.add_argument('--device-delay', type=int, default=10,
@@ -818,6 +823,24 @@ Examples:
                        help='Timeout for network scan in seconds (default: 60)')
     
     args = parser.parse_args()
+
+    # With discovery enabled, positional arguments are firmware files rather than
+    # a CSV path. Preserve the documented `--discover esp-miner.bin www.bin`
+    # form despite argparse assigning the first optional positional to csv_file.
+    if args.discover and args.csv_file:
+        if args.esp_miner_bin and not args.www_bin:
+            args.www_bin = args.esp_miner_bin
+            args.esp_miner_bin = args.csv_file
+            args.csv_file = None
+        elif not args.esp_miner_bin and args.csv_file.suffix == ".bin":
+            args.esp_miner_bin = args.csv_file
+            args.csv_file = None
+
+    if not args.discover and not args.csv_file:
+        args.discover = True
+
+    args.esp_miner_bin = args.esp_miner_bin or default_esp_miner_bin
+    args.www_bin = args.www_bin or default_www_bin
     
     try:
         # Initialize updater

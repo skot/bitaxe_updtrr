@@ -36,7 +36,19 @@ chmod +x updtrr.py
 ### Basic Usage
 
 ```bash
+python updtrr.py
+```
+
+By default, the updater discovers Bitaxe devices on the local network and uses `esp-miner.bin` and `www.bin` from the current directory.
+
+```bash
 python updtrr.py devices.csv esp-miner.bin www.bin
+```
+
+You can also provide only a CSV file and use the default binary filenames:
+
+```bash
+python updtrr.py devices.csv
 ```
 
 ### Advanced Usage with Options
@@ -47,9 +59,9 @@ python updtrr.py --timeout 120 --device-delay 15 --upload-delay 10 devices.csv f
 
 ### Command Line Arguments
 
-- `csv_file`: Path to CSV file containing IP addresses (optional with `--discover`)
-- `esp_miner_bin`: Path to the ESP-Miner firmware binary file (optional with `--save-discovered`)
-- `www_bin`: Path to the web interface binary file (optional with `--save-discovered`)
+- `csv_file`: Path to CSV file containing IP addresses (defaults to discovery when omitted)
+- `esp_miner_bin`: Path to the ESP-Miner firmware binary file (default: `esp-miner.bin`)
+- `www_bin`: Path to the web interface binary file (default: `www.bin`)
 
 ### Optional Arguments
 
@@ -92,6 +104,9 @@ The updater can automatically discover Bitaxe devices on your network:
 
 Examples:
 ```bash
+# Discover and update using esp-miner.bin and www.bin
+python updtrr.py
+
 # Just discover and save devices (no firmware needed)
 python updtrr.py --discover --save-discovered discovered_devices.csv
 
