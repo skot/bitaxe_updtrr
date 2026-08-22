@@ -262,14 +262,16 @@ class BitaxeUpdater:
             logger.error(f"✗ Error uploading web interface to {ip}: {e}")
             return False
     
-    def update_device(self, ip: str, firmware_file: Path, www_file: Path, delay: int = 5, force: bool = False) -> Tuple[bool, bool]:
+    def update_device(self, ip: str, firmware_file: Path, www_file: Optional[Path] = None, delay: int = 5, force: bool = False) -> Tuple[bool, bool]:
         """
         Update both web interface and firmware on a device.
         
         Args:
             ip: Device IP address
             firmware_file: Path to ESP-Miner firmware binary
-            www_file: Path to web interface binary
+            www_file: Path to web interface binary, or None to skip the
+                web interface upload (ESP-Miner v2.15.0 and later embed AxeOS
+                in the firmware binary and no longer ship a separate www.bin)
             delay: Delay between web interface and firmware upload (seconds)
             force: Force update even if versions match
             
@@ -287,12 +289,17 @@ class BitaxeUpdater:
                 logger.info(f"Skipping {ip} - already up to date")
                 return True, True  # Consider as success since no update needed
         
-        # Upload web interface first
-        www_success = self.upload_web_interface(ip, www_file)
-        
-        if www_success and delay > 0:
-            logger.info(f"Waiting {delay} seconds before firmware upload...")
-            time.sleep(delay)
+        # Upload web interface first, when one was provided. ESP-Miner v2.15.0
+        # and later embed AxeOS in esp-miner.bin, so no www.bin is published.
+        if www_file is None:
+            logger.info(f"No web interface binary provided for {ip} - firmware only")
+            www_success = True
+        else:
+            www_success = self.upload_web_interface(ip, www_file)
+
+            if www_success and delay > 0:
+                logger.info(f"Waiting {delay} seconds before firmware upload...")
+                time.sleep(delay)
         
         # Upload firmware second
         firmware_success = self.upload_firmware(ip, firmware_file)
@@ -300,11 +307,12 @@ class BitaxeUpdater:
         if firmware_success and www_success:
             logger.info(f"✓ Device {ip} updated successfully")
         else:
-            logger.warning(f"⚠ Device {ip} partially updated (WWW: {'✓' if www_success else '✗'}, FW: {'✓' if firmware_success else '✗'})")
+            www_status = '-' if www_file is None else ('✓' if www_success else '✗')
+            logger.warning(f"⚠ Device {ip} partially updated (WWW: {www_status}, FW: {'✓' if firmware_success else '✗'})")
         
         return www_success, firmware_success
     
-    def update_all_devices(self, ip_addresses: List[str], firmware_file: Path, www_file: Path, 
+    def update_all_devices(self, ip_addresses: List[str], firmware_file: Path, www_file: Optional[Path] = None,
                           device_delay: int = 10, force: bool = False) -> dict:
         """
         Update all devices in the list.
@@ -811,6 +819,8 @@ Examples:
                        help='Delay between web interface and firmware uploads in seconds (default: 5)')
     parser.add_argument('--force', action='store_true',
                        help='Force update even if device firmware is already up to date')
+    parser.add_argument('--skip-www', action='store_true',
+                       help='Skip the web interface upload (ESP-Miner v2.15.0+ embeds AxeOS in esp-miner.bin)')
     parser.add_argument('--check-versions', action='store_true',
                        help='Only check versions without updating devices')
     parser.add_argument('--discover', action='store_true',
@@ -840,7 +850,10 @@ Examples:
         args.discover = True
 
     args.esp_miner_bin = args.esp_miner_bin or default_esp_miner_bin
-    args.www_bin = args.www_bin or default_www_bin
+    if args.skip_www:
+        args.www_bin = None
+    elif args.www_bin is None and default_www_bin.is_file():
+        args.www_bin = default_www_bin
     
     try:
         # Initialize updater
@@ -869,12 +882,13 @@ Examples:
         
         # Validate input files when updating
         if not args.save_discovered:  # Skip validation in discovery-only mode
-            if not args.esp_miner_bin or not args.www_bin:
-                logger.error("ESP-Miner binary and web interface files are required for updating")
+            if not args.esp_miner_bin:
+                logger.error("ESP-Miner binary is required for updating")
                 sys.exit(1)
             logger.info("Validating input files...")
             updater.validate_binary_file(args.esp_miner_bin)
-            updater.validate_binary_file(args.www_bin)
+            if args.www_bin:
+                updater.validate_binary_file(args.www_bin)
         
         # Check if we're only checking versions
         if args.check_versions:
@@ -894,7 +908,10 @@ Examples:
         # Start updates
         logger.info(f"\nStarting updates for {len(ip_addresses)} devices...")
         logger.info(f"Firmware file: {args.esp_miner_bin} ({args.esp_miner_bin.stat().st_size} bytes)")
-        logger.info(f"Web interface file: {args.www_bin} ({args.www_bin.stat().st_size} bytes)")
+        if args.www_bin:
+            logger.info(f"Web interface file: {args.www_bin} ({args.www_bin.stat().st_size} bytes)")
+        else:
+            logger.info("Web interface file: none (AxeOS is embedded in the firmware)")
         
         if args.force:
             logger.info("Force update enabled - will update all devices regardless of version")
@@ -906,7 +923,7 @@ Examples:
         
         # Modify the update_device call to use the upload delay
         original_update_device = updater.update_device
-        def update_device_with_delay(ip, fw_file, www_file, delay=None, force=False):
+        def update_device_with_delay(ip, fw_file, www_file=None, delay=None, force=False):
             # Use the specified delay or default from args
             actual_delay = delay if delay is not None else args.upload_delay
             return original_update_device(ip, fw_file, www_file, delay=actual_delay, force=force)
@@ -922,7 +939,8 @@ Examples:
         logger.info(f"{'='*50}")
         logger.info(f"Total devices: {results['total']}")
         logger.info(f"Firmware uploads successful: {results['firmware_success']}")
-        logger.info(f"Web interface uploads successful: {results['www_success']}")
+        if args.www_bin:
+            logger.info(f"Web interface uploads successful: {results['www_success']}")
         logger.info(f"Both uploads successful: {results['both_success']}")
         logger.info(f"Up to date (skipped): {results.get('up_to_date', 0)}")
         logger.info(f"Failed: {len(results['failed'])}")
